@@ -13,6 +13,10 @@ from scipy.signal import butter, fftconvolve, sosfilt
 SR = 48000
 
 NOTE: dict[str, float] = {
+    'Cs1': 34.65, 'Gs1': 51.91, 'Cs2': 69.30, 'A2': 110.00, 'Gs2': 103.83,
+    'Cs3': 138.59, 'Ds3': 155.56, 'Fs3': 185.00, 'Ds4': 311.13, 'A4': 440.00,
+    'A1': 55.00, 'B1': 61.74, 'Fs2': 92.50, 'Ds2': 77.78, 'Fs1': 46.25,
+    'D4': 293.66, 'D5': 587.33,
     'E1': 41.20, 'E2': 82.41, 'B2': 123.47, 'E3': 164.81, 'Gs3': 207.65,
     'A3': 220.00, 'B3': 246.94, 'Cs4': 277.18, 'E4': 329.63, 'Fs4': 369.99,
     'Gs4': 415.30, 'B4': 493.88, 'Cs5': 554.37, 'E5': 659.25, 'Fs5': 739.99,
@@ -178,6 +182,79 @@ def soft_clip(x: np.ndarray, drive: float = 1.0) -> np.ndarray:
     return np.tanh(x * drive) / np.tanh(drive)
 
 
+def snap(freq: float, period: float) -> float:
+    """Rounds a frequency to the nearest whole number of cycles per loop period.
+
+    This is what makes a looping bed seamless without any crossfade: if every partial
+    completes an integer number of cycles in `period` seconds, the waveform is strictly
+    periodic and its end meets its start exactly. The shift needed is inaudible — at a
+    120 s loop the grid spacing is 1/120 Hz, under a thousandth of a cent at musical pitches.
+    """
+    cycles = max(1, round(freq * period))
+    return cycles / period
+
+
+def lfo(cycles: int, dur: float, phase: float = 0.0, sr: int = SR) -> np.ndarray:
+    """Bipolar sine LFO completing exactly `cycles` cycles over `dur` — loop-safe by construction."""
+    t = np.linspace(0, 1, int(dur * sr), endpoint=False)
+    return np.sin(2 * np.pi * (cycles * t + phase))
+
+
+def loop_noise(dur: float, seed: int = 0, lo: float = 20, hi: float = 18000,
+               sr: int = SR) -> np.ndarray:
+    """Band-limited noise that is periodic over `dur` by construction.
+
+    Built from random phases in the frequency domain, so an inverse FFT of length n returns a
+    signal whose end meets its start exactly. Ordinary `noise` cannot do this: white samples
+    have no reason to line up across the wrap, and in a looping bed that mismatch is a click.
+    """
+    n = int(dur * sr)
+    freqs = np.fft.rfftfreq(n, 1 / sr)
+    rng = np.random.default_rng(seed)
+    spectrum = np.exp(2j * np.pi * rng.random(len(freqs)))
+    spectrum[(freqs < lo) | (freqs > hi)] = 0
+    out = np.fft.irfft(spectrum, n=n)
+    return out / (np.max(np.abs(out)) + 1e-9)
+
+
+def cyclic(fn, x: np.ndarray) -> np.ndarray:
+    """Applies a filter as if the signal were circular, by running it over two copies and
+    keeping the second. Without this, a filter's start-up transient lands on the loop point."""
+    return fn(np.concatenate([x, x]))[len(x):]
+
+
+def window(dur: float, centre: float, width: float, sr: int = SR) -> np.ndarray:
+    """A raised-cosine window centred at `centre` seconds, wrapping around the loop.
+
+    Distance is measured circularly, so a window near the end continues into the start of the
+    next pass — which is what lets a bed change chords over its length and still loop cleanly.
+    """
+    t = np.linspace(0, dur, int(dur * sr), endpoint=False)
+    d = np.abs(((t - centre + dur / 2) % dur) - dur / 2)
+    return np.where(d < width / 2, 0.5 + 0.5 * np.cos(2 * np.pi * d / width), 0.0)
+
+
+def loop_reverb(x: np.ndarray, wet: float = 0.3, rt60: float = 3.0, seed: int = 1,
+                hf_damp: float = 4000, sr: int = SR) -> np.ndarray:
+    """Reverb via CIRCULAR convolution, so the tail wraps into the head instead of running past
+    the end. Keeps a looping bed seamless where ordinary convolution would leave a seam."""
+    ir = make_ir(min(rt60 * 1.4, len(x) / sr * 0.5), rt60, sr=sr, seed=seed, hf_damp=hf_damp)
+    n = len(x)
+    spectrum = np.fft.rfft(x) * np.fft.rfft(ir, n=n)
+    wetted = np.fft.irfft(spectrum, n=n)
+    wetted /= (np.max(np.abs(wetted)) + 1e-9)
+    return x * (1 - wet) + wetted * wet
+
+
+def loop_seam(x: np.ndarray, sr: int = SR, ms: float = 20) -> float:
+    """Measures loop discontinuity: peak jump across the wrap point, relative to the signal's
+    own peak sample-to-sample motion. Under ~1.0 the seam is inaudible."""
+    mono = x.mean(axis=1) if x.ndim > 1 else x
+    step = np.max(np.abs(np.diff(mono)))
+    jump = abs(float(mono[0]) - float(mono[-1]))
+    return jump / (step + 1e-12)
+
+
 def pad(x: np.ndarray, n: int) -> np.ndarray:
     """Pads or truncates a signal to exactly n samples."""
     return np.pad(x, (0, max(0, n - len(x))))[:n]
@@ -227,6 +304,14 @@ def normalize(x: np.ndarray, peak_db: float = -1.0) -> np.ndarray:
     if peak < 1e-9:
         return x
     return x / peak * (10 ** (peak_db / 20))
+
+
+def write_loop(path: str, x: np.ndarray, sr: int = SR) -> np.ndarray:
+    """Writes a looping bed verbatim. Deliberately skips the trim and fade that `write` applies:
+    both would cut into the wrap point and turn a seamless loop into a clicking one."""
+    y = np.clip(x, -1.0, 1.0)
+    wavfile.write(path, sr, (y * 32767).astype(np.int16))
+    return y
 
 
 def write(path: str, x: np.ndarray, sr: int = SR, trim_thr: float = 1e-4) -> np.ndarray:

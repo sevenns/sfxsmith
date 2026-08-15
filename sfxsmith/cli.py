@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
 from .analyze import analyze
-from .engine import normalize, write
+from .engine import loop_seam, normalize, write, write_loop
 from .player import build
 
 PACKS_DIR = Path(__file__).resolve().parent.parent / 'packs'
@@ -66,6 +67,42 @@ def cmd_analyze(args: argparse.Namespace) -> None:
             print()
 
 
+def to_mp3(wav_path: Path, bitrate: str) -> Path:
+    """Encodes a rendered WAV to MP3 with ffmpeg, leaving the WAV in place."""
+    mp3_path = wav_path.with_suffix('.mp3')
+    result = subprocess.run(
+        ['ffmpeg', '-v', 'error', '-y', '-i', str(wav_path), '-codec:a', 'libmp3lame',
+         '-b:a', bitrate, str(mp3_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f'ffmpeg failed: {result.stderr.strip()}')
+    return mp3_path
+
+
+def cmd_track(args: argparse.Namespace) -> None:
+    """Renders long-form looping tracks from a module's TRACKS mapping."""
+    module = load_pack_module(args.module)
+    tracks = getattr(module, 'TRACKS', None)
+    if tracks is None:
+        raise SystemExit(f'module {args.module!r} defines no TRACKS')
+    out_root = Path(args.out)
+    out_root.mkdir(parents=True, exist_ok=True)
+    for name, render in tracks.items():
+        if args.only and name not in args.only:
+            continue
+        samples = render()
+        path = out_root / f'{name}.wav'
+        write_loop(str(path), samples)
+        seam = loop_seam(samples)
+        size = path.stat().st_size / 1024 / 1024
+        print(f'{path}  {len(samples) / 48000:.1f}s  {size:.1f} MB  seam {seam:.2f}'
+              f'{"" if seam < 1.0 else "  ← AUDIBLE, loop is not periodic"}')
+        if args.mp3:
+            mp3 = to_mp3(path, args.bitrate)
+            print(f'{mp3}  {mp3.stat().st_size / 1024 / 1024:.1f} MB  ({args.bitrate})')
+
+
 def cmd_player(args: argparse.Namespace) -> None:
     """Builds the HTML comparator for a directory of pack folders."""
     out = build(Path(args.root), Path(args.out), title=args.title)
@@ -90,6 +127,14 @@ def main(argv: list[str] | None = None) -> None:
     an = sub.add_parser('analyze', help='measure WAV files (duration, centroid, flatness)')
     an.add_argument('files', nargs='+', help='paths or glob patterns')
     an.set_defaults(func=cmd_analyze)
+
+    track = sub.add_parser('track', help='render long-form looping tracks (ambience beds)')
+    track.add_argument('module', help='pack module name (file stem under packs/)')
+    track.add_argument('-o', '--out', default='out', help='output directory (default: out)')
+    track.add_argument('--only', nargs='*', help='render only these track names')
+    track.add_argument('--mp3', action='store_true', help='also encode to MP3 (needs ffmpeg)')
+    track.add_argument('--bitrate', default='192k', help='MP3 bitrate (default: 192k)')
+    track.set_defaults(func=cmd_track)
 
     player = sub.add_parser('player', help='build a self-contained HTML comparator')
     player.add_argument('root', help='directory containing pack folders')
