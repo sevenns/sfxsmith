@@ -3,6 +3,11 @@
 Each pack fills the four slots Playhook expects (move, button, back, play). The slot
 peaks are staggered so navigation never shouts over confirmation.
 
+`playhook-aurora-v1` is the superseded first take on the PS5 lineage: it was measured only
+coarsely, and reads too bright (its `move` carries 23.5% hi-mid against the reference's 3.2%).
+`packs/playhook_bell.py` replaced it as `playhook-aurora`; this one is kept because its longer
+reverb tail is what the replacement's echo dial was tuned against.
+
 The reference study behind these: PS5 sounds are highly tonal (spectral flatness 0.016-0.054),
 soft-attacked and long-tailed; Steam Big Picture sounds are bass-heavy and percussive with a
 5 ms transient. Aurora follows the first, Tactile the second, Cartridge fuses them and adds
@@ -177,7 +182,7 @@ def cartridge_play() -> np.ndarray:
 
 
 PACKS = {
-    'playhook-aurora': {
+    'playhook-aurora-v1': {
         'move': aurora_move, 'button': aurora_button,
         'back': aurora_back, 'play': aurora_play,
     },

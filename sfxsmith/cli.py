@@ -46,10 +46,21 @@ def cmd_render(args: argparse.Namespace) -> None:
                   f'{path.stat().st_size / 1024:.0f}KB')
 
 
+def expand(pattern: str) -> list[Path]:
+    """Expands a glob pattern, handling absolute patterns as well as relative ones."""
+    p = Path(pattern)
+    if p.is_absolute():
+        anchor = Path(p.anchor)
+        matches = sorted(anchor.glob(str(p.relative_to(anchor))))
+    else:
+        matches = sorted(Path().glob(pattern))
+    return matches or [p]
+
+
 def cmd_analyze(args: argparse.Namespace) -> None:
     """Prints spectral measurements for each given WAV file."""
     for pattern in args.files:
-        for path in sorted(Path().glob(pattern)) or [Path(pattern)]:
+        for path in expand(pattern):
             report = analyze(str(path))
             print(report.line() if report is not None else f'{path}: silent')
             print()
