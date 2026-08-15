@@ -41,12 +41,39 @@ level, DC offset and clipped samples. Point it at a reference set you admire and
 numbers to aim for.
 
 ```bash
+sfxsmith track playhook_ambience -o out --mp3
+```
+
+Renders long-form looping tracks — ambience beds rather than one-shots — from a module's
+`TRACKS` mapping, and reports the loop seam: the discontinuity across the wrap point, relative
+to the signal's own sample-to-sample motion. Under 1.0 is inaudible. `--mp3` encodes with
+ffmpeg alongside the WAV.
+
+```bash
 sfxsmith player out -o player.html
 ```
 
 Builds one self-contained HTML page with every rendered sound embedded as a data URI: click
 a tile to hear it, or play a whole pack as a scripted path through a UI (three moves, a
 confirm, a move, a cancel, a launch). Nothing else is needed to audition or share a pack.
+
+## Looping without a seam
+
+An ambience bed has to meet itself at the wrap point, and crossfading there is a patch, not a
+fix. `sfxsmith` makes the loop periodic by construction instead:
+
+- `snap` rounds every partial to a whole number of cycles per loop. At a 120 s loop the grid is
+  1/120 Hz — under a thousandth of a cent at musical pitches, so the pitch survives intact.
+- `lfo` and `window` complete an integer number of cycles, and `window` measures its distance
+  circularly, so a chord that starts near the end continues into the next pass.
+- `loop_noise` builds noise from random phases in the frequency domain, which is periodic where
+  ordinary white noise is not.
+- `cyclic` runs a filter over two copies of the signal and keeps the second, so the filter's
+  start-up transient never lands on the loop point.
+- `loop_reverb` convolves circularly, wrapping the tail into the head.
+
+`write_loop` then writes the result verbatim, skipping the trim and fade that `write` applies to
+one-shots — both would cut into the wrap.
 
 ## How a pack is written
 
@@ -96,6 +123,18 @@ The resulting packs, all in E (Emaj9):
 - **playhook-cartridge** — the hybrid, plus a layer of inharmonic partials at metal-plate
   ratios (1 / 2.41 / 3.83 / 5.17 / 7.03) that reads as a cartridge seating in its slot. That
   layer is the part neither reference has.
+
+`packs/playhook_lowend.py` reworks the Steam lineage from a deeper measurement of it — that set
+puts 0.0-0.1% of its energy above 3 kHz, and its `button` transient is an instant onset of
+low-mid energy rather than a noise click. `packs/playhook_bell.py` does the same for the PS5
+lineage, where brightness runs opposite to intuition: `move` is the dark sound (3.2% hi-mid) and
+`play` the bright one (24.1%).
+
+`packs/playhook_ambience.py` is a two-minute bed in C# minor — a key chosen so its scale
+contains the C#-E-G#-B the UI packs are built from, since a bed in the references' flat minors
+would put a semitone under every click. It moves through four chords rather than sitting on
+one, its detune beating switches off entirely for a stretch before each change, and it passes
+through silence twice per loop.
 
 ## Licence
 

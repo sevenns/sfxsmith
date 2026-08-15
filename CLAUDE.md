@@ -47,6 +47,32 @@ This is the constraint that shapes everything. An agent working here has no ears
 A pack module may import from `sfxsmith.engine`. Nothing in `sfxsmith/` may import from
 `packs/` — packs are data to the engine, loaded by path in `cli.load_pack_module`.
 
+## Looping tracks
+
+A module may export `TRACKS` (name to function) alongside or instead of `PACKS`; `sfxsmith
+track` renders those, with `--mp3` for encoding. Two rules that are easy to violate silently:
+
+- **Periodicity is not optional and not eyeballed.** `sfxsmith track` prints a seam measurement
+  and shouts when it exceeds 1.0. It has caught a real regression: darkening a mix stopped
+  masking a non-periodic noise layer and the seam jumped from 0.34 to 5.11. Do not "fix" a seam
+  with a crossfade — find what in the signal is not periodic and use the loop-safe primitive for
+  it (`snap`, `lfo`, `window`, `loop_noise`, `cyclic`, `loop_reverb`).
+- **Write with `write_loop`, never `write`.** The latter trims silence and applies a fade, both
+  of which cut into the wrap point.
+
+## Ambience is judged by different numbers
+
+`analyze` is built for one-shots. For a bed, what matters is band balance, channel correlation,
+how far loudness swings, and the modulation spectrum — how fast and how deeply it pulses. Two
+findings worth keeping:
+
+- **A bed that never stops pulsing is exhausting**, however slow the pulse. Uniform detune
+  across a chord makes every pair beat at a similar rate and stacks into one throb; scatter the
+  amounts, and key them to the NOTE rather than to the section, or a note shared by two chords
+  beats against its own other version where the sections overlap.
+- **A static chord reads as monotonous no matter how slow its LFOs are.** Movement has to be
+  harmonic — chords changing — not modulation getting slower.
+
 ## Adding a pack
 
 1. Create `packs/<name>.py` with `PACKS = {'<pack-name>': {'<slot>': fn}}`.
