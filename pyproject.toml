@@ -1,0 +1,16 @@
+[project]
+name = "sfxsmith"
+version = "0.1.0"
+description = "Procedural synthesis of UI sound effects, with spectral analysis against reference sets"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26", "scipy>=1.11"]
+
+[project.scripts]
+sfxsmith = "sfxsmith.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["sfxsmith"]
