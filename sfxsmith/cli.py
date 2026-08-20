@@ -25,6 +25,10 @@ def load_pack_module(name: str):
     if spec is None or spec.loader is None:
         raise SystemExit(f'cannot load {path}')
     module = importlib.util.module_from_spec(spec)
+    # Registered before execution because that is what importlib expects of any loader: a module
+    # defining a dataclass resolves its own annotations through sys.modules, and without this the
+    # decorator fails with an AttributeError that names neither the pack nor the cause.
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -40,11 +44,19 @@ def cmd_render(args: argparse.Namespace) -> None:
         pack_dir = out_root / pack_name
         pack_dir.mkdir(parents=True, exist_ok=True)
         for slot, render in slots.items():
-            samples = normalize(render(), peaks.get(slot, args.peak_db))
+            # A pack may override one slot's level with a 'pack-name/slot' key. Needed whenever
+            # packs in one module differ in register: peak dBFS ignores the ear's sensitivity
+            # curve, so a sound built on a 41 Hz fundamental measures level with its siblings
+            # and still sounds several decibels quieter than them.
+            target = peaks.get(f'{pack_name}/{slot}', peaks.get(slot, args.peak_db))
+            samples = normalize(render(), target)
             path = pack_dir / f'{slot}.wav'
             written = write(str(path), samples, trim_thr=args.trim)
             print(f'{path}  {len(written) / 48000 * 1000:.0f}ms  '
                   f'{path.stat().st_size / 1024:.0f}KB')
+            if args.mp3:
+                mp3 = to_mp3(path, args.bitrate)
+                print(f'{mp3}  {mp3.stat().st_size / 1024:.0f}KB  ({args.bitrate})')
 
 
 def expand(pattern: str) -> list[Path]:
@@ -122,6 +134,8 @@ def main(argv: list[str] | None = None) -> None:
                         help='fallback peak for slots the module does not list')
     render.add_argument('--trim', type=float, default=1e-4,
                         help='silence threshold for tail trimming (raise to shrink files)')
+    render.add_argument('--mp3', action='store_true', help='also encode to MP3 (needs ffmpeg)')
+    render.add_argument('--bitrate', default='192k', help='MP3 bitrate (default: 192k)')
     render.set_defaults(func=cmd_render)
 
     an = sub.add_parser('analyze', help='measure WAV files (duration, centroid, flatness)')

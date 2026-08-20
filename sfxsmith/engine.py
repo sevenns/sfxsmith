@@ -24,6 +24,31 @@ NOTE: dict[str, float] = {
 }
 
 
+_PITCH_CLASS: dict[str, int] = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+
+
+def hz(name: str) -> float:
+    """Frequency of a note written as letter + optional accidental + octave: 'E4', 'As3', 'Db5'.
+
+    Equal temperament against A4 = 440 Hz, matching the `NOTE` table (which stays as the
+    hand-written vocabulary the earlier packs are built on). Accidentals may be written 's'/'#'
+    for sharp and 'b' for flat, so a set measured in flat keys can be transcribed as it reads
+    rather than being mentally re-spelled.
+    """
+    letter = name[0].upper()
+    if letter not in _PITCH_CLASS:
+        raise ValueError(f'not a note name: {name!r}')
+    accidental = {'s': 1, '#': 1, 'b': -1}.get(name[1], 0) if len(name) > 2 else 0
+    octave = int(name[1 + (accidental != 0):])
+    midi = 12 * (octave + 1) + _PITCH_CLASS[letter] + accidental
+    return 440.0 * 2 ** ((midi - 69) / 12)
+
+
+def step(freq: float, semitones: float) -> float:
+    """Transposes a frequency by an interval in semitones."""
+    return freq * 2 ** (semitones / 12)
+
+
 def t_axis(dur: float, sr: int = SR) -> np.ndarray:
     """Time axis in seconds for a signal of `dur` seconds."""
     return np.arange(int(dur * sr)) / sr
@@ -40,6 +65,21 @@ def env_ar(dur: float, attack: float, decay: float, curve: float = 3.0, sr: int 
 def env_perc(dur: float, attack: float, decay: float, sr: int = SR) -> np.ndarray:
     """Percussive envelope: `env_ar` with a fixed steep curve."""
     return env_ar(dur, attack, decay, curve=4.5, sr=sr)
+
+
+def env_ahd(dur: float, attack: float, hold: float, decay: float, curve: float = 3.0,
+            sr: int = SR) -> np.ndarray:
+    """Attack-hold-decay envelope: `env_ar` with a plateau at full level between the two.
+
+    `env_ar` starts decaying the instant the attack ends, so a layer meant to occupy a stated
+    stretch of time is already half gone by the middle of it. The hold is what makes a section
+    of a longer sound READ as that long: how long something stays up, not how long it takes to
+    fall away under whatever comes next.
+    """
+    t = t_axis(dur, sr)
+    a = np.clip(t / max(attack, 1e-5), 0, 1) ** 0.7
+    rel = np.exp(-curve * np.clip((t - attack - hold) / max(decay, 1e-5), 0, None))
+    return a * rel
 
 
 def sine(freq: float | np.ndarray, dur: float, phase: float = 0.0, sr: int = SR) -> np.ndarray:
